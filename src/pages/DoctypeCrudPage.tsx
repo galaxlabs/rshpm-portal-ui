@@ -25,7 +25,59 @@ import type { DoctypeField } from '@/types/doctype';
 type DocRecord = Record<string, unknown>;
 const PAGE_SIZE = 20;
 
-function ChildTableEditor({ field, value, onChange }: { field: DoctypeField; value: unknown; onChange: (v: unknown[]) => void }) {
+function LinkFieldPicker({
+  linkedDoctype,
+  value,
+  onChange,
+  options,
+}: {
+  linkedDoctype: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: string[];
+}) {
+  const [search, setSearch] = useState('');
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return options;
+    return options.filter((item) => item.toLowerCase().includes(q));
+  }, [search, options]);
+
+  return (
+    <div className="space-y-2">
+      <Input
+        placeholder={`Search ${linkedDoctype}...`}
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+      />
+      <Select
+        className="h-auto"
+        size={Math.min(8, Math.max(4, filtered.length || 4))}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      >
+        <option value="">Select {linkedDoctype}...</option>
+        {filtered.map((item) => (
+          <option key={item} value={item}>
+            {item}
+          </option>
+        ))}
+      </Select>
+    </div>
+  );
+}
+
+function ChildTableEditor({
+  field,
+  value,
+  onChange,
+  linkOptionsMap,
+}: {
+  field: DoctypeField;
+  value: unknown;
+  onChange: (v: unknown[]) => void;
+  linkOptionsMap: Record<string, string[]>;
+}) {
   const rows = Array.isArray(value) ? (value as DocRecord[]) : [];
   const childMeta = getChildMeta(field.options || '');
   const childFields = childMeta ? getEditableFields(childMeta).filter((f) => f.fieldtype !== 'Table') : [];
@@ -58,10 +110,31 @@ function ChildTableEditor({ field, value, onChange }: { field: DoctypeField; val
           {childFields.map((cf) => (
             <div key={`${idx}-${cf.fieldname}`}>
               <label className="mb-1 block text-xs text-slate-400">{cf.label || cf.fieldname}</label>
-              <Input
-                value={String((row[cf.fieldname as string] as string) || '')}
-                onChange={(e) => updateCell(idx, cf.fieldname as string, e.target.value)}
-              />
+              {cf.fieldtype === 'Select' && parseSelectOptions(cf).length ? (
+                <Select
+                  value={String((row[cf.fieldname as string] as string) || '')}
+                  onChange={(e) => updateCell(idx, cf.fieldname as string, e.target.value)}
+                >
+                  <option value="">Select...</option>
+                  {parseSelectOptions(cf).map((opt) => (
+                    <option key={opt} value={opt}>
+                      {opt}
+                    </option>
+                  ))}
+                </Select>
+              ) : cf.fieldtype === 'Link' && cf.options ? (
+                <LinkFieldPicker
+                  linkedDoctype={cf.options}
+                  value={String((row[cf.fieldname as string] as string) || '')}
+                  options={linkOptionsMap[cf.options] || []}
+                  onChange={(v) => updateCell(idx, cf.fieldname as string, v)}
+                />
+              ) : (
+                <Input
+                  value={String((row[cf.fieldname as string] as string) || '')}
+                  onChange={(e) => updateCell(idx, cf.fieldname as string, e.target.value)}
+                />
+              )}
             </div>
           ))}
           <div className="md:col-span-2">
@@ -80,7 +153,17 @@ function ChildTableEditor({ field, value, onChange }: { field: DoctypeField; val
   );
 }
 
-function FieldInput({ field, value, onChange }: { field: DoctypeField; value: unknown; onChange: (v: unknown) => void }) {
+function FieldInput({
+  field,
+  value,
+  onChange,
+  linkOptionsMap,
+}: {
+  field: DoctypeField;
+  value: unknown;
+  onChange: (v: unknown) => void;
+  linkOptionsMap: Record<string, string[]>;
+}) {
   if (field.fieldtype === 'Check') {
     return (
       <label className="flex items-center gap-2 text-sm">
@@ -91,7 +174,7 @@ function FieldInput({ field, value, onChange }: { field: DoctypeField; value: un
   }
 
   if (field.fieldtype === 'Table') {
-    return <ChildTableEditor field={field} value={value} onChange={(v) => onChange(v)} />;
+    return <ChildTableEditor field={field} value={value} onChange={(v) => onChange(v)} linkOptionsMap={linkOptionsMap} />;
   }
 
   const options = field.fieldtype === 'Select' ? parseSelectOptions(field) : [];
@@ -105,6 +188,19 @@ function FieldInput({ field, value, onChange }: { field: DoctypeField; value: un
           </option>
         ))}
       </Select>
+    );
+  }
+
+  if (field.fieldtype === 'Link' && field.options) {
+    const linkedDoctype = field.options;
+    const items = linkOptionsMap[linkedDoctype] || [];
+    return (
+      <LinkFieldPicker
+        linkedDoctype={linkedDoctype}
+        value={String(value ?? '')}
+        options={items}
+        onChange={(v) => onChange(v)}
+      />
     );
   }
 
@@ -162,6 +258,7 @@ export function DoctypeCrudPage() {
   const [loadError, setLoadError] = useState('');
   const [query, setQuery] = useState('');
   const [page, setPage] = useState(1);
+  const [linkOptionsMap, setLinkOptionsMap] = useState<Record<string, string[]>>({});
 
   const listFields = useMemo(() => (meta ? getListFields(meta) : ['name']), [meta]);
   const editableFields = useMemo(() => (meta ? getEditableFields(meta) : []), [meta]);
@@ -224,6 +321,47 @@ export function DoctypeCrudPage() {
       .finally(() => setLoading(false));
   }, [meta, listFields]);
 
+  useEffect(() => {
+    if (!meta) return;
+
+    const directLinks = editableFields
+      .filter((f) => f.fieldtype === 'Link' && f.options)
+      .map((f) => String(f.options));
+
+    const childTableLinks = editableFields
+      .filter((f) => f.fieldtype === 'Table' && f.options)
+      .flatMap((tableField) => {
+        const childMeta = getChildMeta(String(tableField.options));
+        if (!childMeta) return [];
+        return getEditableFields(childMeta)
+          .filter((f) => f.fieldtype === 'Link' && f.options)
+          .map((f) => String(f.options));
+      });
+
+    const linkDoctypes = Array.from(new Set([...directLinks, ...childTableLinks]));
+
+    if (!linkDoctypes.length) {
+      setLinkOptionsMap({});
+      return;
+    }
+
+    Promise.allSettled(
+      linkDoctypes.map(async (dt) => {
+        const docs = await listAllDocs<DocRecord>(dt, ['name'], 200, 2000);
+        const names = docs.map((row) => String(row.name ?? '')).filter(Boolean);
+        return [dt, names] as const;
+      }),
+    ).then((results) => {
+      const next: Record<string, string[]> = {};
+      results.forEach((result) => {
+        if (result.status === 'fulfilled') {
+          next[result.value[0]] = result.value[1];
+        }
+      });
+      setLinkOptionsMap(next);
+    });
+  }, [meta, editableFields]);
+
   if (!meta) return <p>Document not found</p>;
   const activeMeta = meta;
 
@@ -239,7 +377,8 @@ export function DoctypeCrudPage() {
   }
 
   async function onEdit(name: string) {
-    const full = await getDoc<DocRecord>(activeMeta.name, name);
+    const fullRes = await getDoc(activeMeta.name, name);
+    const full = ((fullRes as { data?: DocRecord })?.data || fullRes) as DocRecord;
     setSelected(name);
     setForm(full);
   }
@@ -257,11 +396,12 @@ export function DoctypeCrudPage() {
     setMessage('');
     try {
       if (selected) {
-        await updateDoc<DocRecord>(activeMeta.name, selected, form);
+        await updateDoc(activeMeta.name, selected, form);
         setMessage(`Updated ${selected}`);
       } else {
         const payload: DocRecord = { ...form, doctype: activeMeta.name };
-        const doc = await createDoc<DocRecord>(activeMeta.name, payload);
+        const docRes = await createDoc(activeMeta.name, payload);
+        const doc = ((docRes as { data?: DocRecord })?.data || docRes) as DocRecord;
         setMessage(`Created ${String(doc.name || '')}`);
       }
       await reload();
@@ -419,6 +559,7 @@ export function DoctypeCrudPage() {
                 <FieldInput
                   field={field}
                   value={form[field.fieldname as string]}
+                  linkOptionsMap={linkOptionsMap}
                   onChange={(v) => setForm((prev) => ({ ...prev, [field.fieldname as string]: v }))}
                 />
               </div>
@@ -437,6 +578,7 @@ export function DoctypeCrudPage() {
                       <FieldInput
                         field={field}
                         value={form[field.fieldname as string]}
+                        linkOptionsMap={linkOptionsMap}
                         onChange={(v) => setForm((prev) => ({ ...prev, [field.fieldname as string]: v }))}
                       />
                     </div>
@@ -459,9 +601,7 @@ export function DoctypeCrudPage() {
                 <Button
                   type="button"
                   variant="secondary"
-                  onClick={() =>
-                    window.open(getPrintViewUrl(activeMeta.name, selected, undefined, true), '_blank', 'noopener,noreferrer')
-                  }
+                  onClick={() => window.open(`${getPrintViewUrl(activeMeta.name, selected)}&trigger_print=1`, '_blank', 'noopener,noreferrer')}
                 >
                   <Printer className="mr-1 h-3 w-3" />
                   Print Selected

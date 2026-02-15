@@ -20,28 +20,11 @@ export type DashboardSnapshot = {
   statusMix: Array<{ status: string; total: number }>;
 };
 
-const priorityKeywords = [
-  /property/i,
-  /inquiry/i,
-  /booking/i,
-  /allotment/i,
-  /payment/i,
-  /possession/i,
-  /transfer/i,
-  /client/i,
-];
+export const CORE_MODULES = ['Client', 'Payment', 'Property', 'Booking'] as const;
 
 export function getTrackedDoctypes(limit = 10) {
-  const chosen: string[] = [];
-  for (const matcher of priorityKeywords) {
-    const hit = doctypes.find((dt) => matcher.test(dt.name))?.name;
-    if (hit && !chosen.includes(hit)) chosen.push(hit);
-  }
-  if (chosen.length < limit) {
-    doctypes.forEach((dt) => {
-      if (chosen.length < limit && !chosen.includes(dt.name)) chosen.push(dt.name);
-    });
-  }
+  const available = new Set(doctypes.map((d) => d.name));
+  const chosen = CORE_MODULES.filter((d) => available.has(d));
   return chosen.slice(0, limit);
 }
 
@@ -69,9 +52,9 @@ export async function loadDashboardSnapshot(tracked: string[]): Promise<Dashboar
     )
     .map((r) => r.value);
 
-  const kpi = fulfilled
-    .map((item) => ({ doctype: item.doctype, total: item.docs.length }))
-    .sort((a, b) => b.total - a.total);
+  const kpiMap = new Map<string, number>();
+  fulfilled.forEach((item) => kpiMap.set(item.doctype, item.docs.length));
+  const kpi = tracked.map((name) => ({ doctype: name, total: kpiMap.get(name) || 0 }));
 
   const recent = fulfilled
     .flatMap((item) =>

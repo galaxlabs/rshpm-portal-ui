@@ -1,51 +1,65 @@
-import { defineConfig, loadEnv } from 'vite';
-import react from '@vitejs/plugin-react';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { defineConfig, loadEnv } from "vite";
+import react from "@vitejs/plugin-react";
+import basicSsl from "@vitejs/plugin-basic-ssl";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, process.cwd(), '');
-  const frappeTarget = env.VITE_FRAPPE_BASE_URL || 'https://dev.galaxylabs.online';
-  const useHttps = mode === 'https';
-  const apiKey = env.FRAPPE_API_KEY || env.VITE_FRAPPE_API_KEY;
-  const apiSecret = env.FRAPPE_API_SECRET || env.VITE_FRAPPE_API_SECRET;
-  const proxyHeaders =
-    apiKey && apiSecret
-      ? {
-          Authorization: `token ${apiKey}:${apiSecret}`,
-        }
-      : undefined;
+  const env = loadEnv(mode, process.cwd(), "");
+  const frappeTarget = env.VITE_FRAPPE_URL || "https://dev.galaxylabs.online";
+
+  console.log("✅ VITE CONFIG LOADED rshpm-portal-ui, target =", frappeTarget);
 
   return {
-    plugins: [react()],
+    plugins: [react(), basicSsl()],
     resolve: {
-      alias: {
-        '@': path.resolve(__dirname, './src'),
-      },
+      alias: { "@": path.resolve(__dirname, "./src") },
     },
     server: {
-      host: '0.0.0.0',
-      https: useHttps,
+      host: "0.0.0.0",
+      port: 5173,
+      https: {},
+
       proxy: {
-        '/api': {
+        "/api": {
           target: frappeTarget,
           changeOrigin: true,
           secure: false,
-          headers: proxyHeaders,
           configure(proxy) {
-            proxy.on('proxyRes', (proxyRes) => {
-              const setCookie = proxyRes.headers['set-cookie'];
+            proxy.on("proxyReq", (_proxyReq, req) => {
+              console.log("➡️ proxyReq", req.method, req.url);
+            });
+
+            proxy.on("proxyRes", (proxyRes) => {
+              const setCookie = proxyRes.headers["set-cookie"];
               if (!setCookie) return;
 
               const cookies = Array.isArray(setCookie) ? setCookie : [setCookie];
-              proxyRes.headers['set-cookie'] = cookies.map((cookie) =>
-                // In local HTTP dev, upstream Secure cookies are not stored by browser.
-                useHttps ? cookie : cookie.replace(/;\s*Secure/gi, ''),
+              proxyRes.headers["set-cookie"] = cookies.map((cookie) =>
+                cookie
+                  // allow cookie to be stored when dev server is https with self-signed
+                  .replace(/;\s*Domain=[^;]+/gi, "")
               );
             });
+
+            proxy.on("error", (err) => {
+              console.log("❌ proxy error:", err?.message || err);
+            });
           },
+        },
+
+        "/printview": {
+          target: frappeTarget,
+          changeOrigin: true,
+          secure: false,
+        },
+
+        "/files": {
+          target: frappeTarget,
+          changeOrigin: true,
+          secure: false,
         },
       },
     },

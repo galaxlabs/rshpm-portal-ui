@@ -27,14 +27,18 @@ export function PrintCenterPage() {
     setLoading(true);
     setError('');
     Promise.all([
-      listDocs<ListItem>(doctype, ['name', 'modified'], 80, 0),
+      listDocs(doctype, { fields: ['name', 'modified'], limit_page_length: 80, limit_start: 0 }),
       listPrintFormats(doctype).catch(() => []),
     ])
       .then(([records, availableFormats]) => {
-        setDocs(records);
-        setName(records[0]?.name || '');
-        setFormats(availableFormats);
-        setFormat(availableFormats[0] || '');
+        const list = (records?.data || records?.docs || []) as ListItem[];
+        setDocs(list);
+        setName(list[0]?.name || '');
+        const names = (availableFormats as Array<{ name?: string }>)
+          .map((f) => String(f?.name || ''))
+          .filter(Boolean);
+        setFormats(names);
+        setFormat(names[0] || '');
       })
       .catch((err) => setError(getApiErrorMessage(err)))
       .finally(() => setLoading(false));
@@ -45,9 +49,8 @@ export function PrintCenterPage() {
     setError('');
     setLoading(true);
     try {
-      const htmlPayload = await fetchPrintHtml(doctype, name, format || undefined);
-      const rendered = `${htmlPayload.style || htmlPayload.css || ''}${htmlPayload.html || ''}`;
-      setPreviewHtml(rendered);
+      const html = await fetchPrintHtml(doctype, name, format || undefined);
+      setPreviewHtml(html);
     } catch (err) {
       setError(getApiErrorMessage(err));
       setPreviewHtml('');
@@ -58,7 +61,9 @@ export function PrintCenterPage() {
 
   function openPrint(trigger = false) {
     if (!doctype || !name) return;
-    const url = getPrintViewUrl(doctype, name, format || undefined, trigger);
+    const url = trigger
+      ? `${getPrintViewUrl(doctype, name, format || undefined)}&trigger_print=1`
+      : getPrintViewUrl(doctype, name, format || undefined);
     window.open(url, '_blank', 'noopener,noreferrer');
   }
 
